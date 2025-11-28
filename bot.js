@@ -51,7 +51,6 @@ function formatEta(value) {
 // --------------------------------------------------
 // Slash command definitions
 // --------------------------------------------------
-
 const commands = [
   // /requestpart
   new SlashCommandBuilder()
@@ -69,9 +68,8 @@ const commands = [
           { name: 'Climber',     value: 'Climber' },
           { name: 'Mechanical',  value: 'Mechanical' },
           { name: 'Electrical',  value: 'Electrical' },
-          { name: 'Pneumatics',  value: 'Pneumatics' },
           { name: 'Vision',      value: 'Vision' },
-	  { name: 'Safety',      value: 'Vision' },
+		  { name: 'Pneumatics',  value: 'Pneumatics' },
           { name: 'Software',    value: 'Safety' },
           { name: 'Spares',      value: 'Spares' },
           { name: 'Other',       value: 'Other' }
@@ -157,7 +155,6 @@ const commands = [
 // --------------------------------------------------
 // Register commands
 // --------------------------------------------------
-
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 async function registerCommands() {
@@ -172,7 +169,6 @@ async function registerCommands() {
 // --------------------------------------------------
 // Discord client
 // --------------------------------------------------
-
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -184,7 +180,6 @@ client.once('ready', () => {
 // --------------------------------------------------
 // Interaction handling
 // --------------------------------------------------
-
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -482,7 +477,6 @@ async function handleInventory(interaction) {
 // --------------------------------------------------
 // Start bot
 // --------------------------------------------------
-
 registerCommands()
   .then(() => client.login(TOKEN))
   .catch(err => {
