@@ -1,0 +1,17 @@
+# Node
+node_modules/
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# OS cruft
+.DS_Store
+
+# Logs
+logs/
+*.log
