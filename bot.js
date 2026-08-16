@@ -1,6 +1,32 @@
-// bot.js - 8793PartBot
-// Requires: discord.js v14, axios
-// npm install discord.js axios
+/*
+ * 8793PartBot – Automated Parts Management System
+ * Copyright (c) 2025 FRC Team 8793 – Pumpkin Bots
+ *
+ * Licensed under the MIT License with Use Notification Requirement.
+ * Full license text available in the project root LICENSE file.
+ *
+ * Use Notification Requirement:
+ * Any team or individual who uses, copies, modifies, or distributes this
+ * software must make a reasonable effort to notify FRC Team 8793 – Pumpkin
+ * Bots. Notification may be sent via email (pumpkinbots@hmbrobotics.org) 
+ * or by opening an issue or discussion on the project's GitHub repository. 
+ * This requirement is intended to foster collaboration and does not restrict 
+ * the permitted uses granted under this license.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to use, copy, modify, merge, publish, and distribute the Software without
+ * restriction, subject to the conditions above.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ */
+require('dotenv').config();
 
 const {
   Client,
@@ -11,36 +37,26 @@ const {
 } = require('discord.js');
 const axios = require('axios');
 
-// ---- ENVIRONMENT VARIABLES ----
-// export DISCORD_TOKEN="..."
-// export CLIENT_ID="..."
-// export GUILD_ID="..."
-// export APPS_SCRIPT_URL="https://script.google.com/macros/s/XXX/exec"
-
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID || !APPS_SCRIPT_URL) {
-  console.error('❌ Missing one or more environment variables: DISCORD_TOKEN, CLIENT_ID, GUILD_ID, APPS_SCRIPT_URL');
+  console.error('❌ Missing environment variables');
   process.exit(1);
 }
 
 function formatDate(value, fallback = 'Unknown') {
   if (!value) return fallback;
-
-  // If Apps Script sends a Date, or an ISO string, just let JS parse it
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
-    // If parsing fails, just return the original string
     return typeof value === 'string' ? value : fallback;
   }
-
   return d.toLocaleDateString('en-US', {
     year: 'numeric',
-    month: 'short', // "Nov"
-    day: 'numeric'  // "27"
+    month: 'short',
+    day: 'numeric'
   });
 }
 
@@ -48,197 +64,321 @@ function formatEta(value) {
   return formatDate(value, 'Not set');
 }
 
-// --------------------------------------------------
-// Slash command definitions
-// --------------------------------------------------
+function formatCurrency(value) {
+  if (value === undefined || value === null || isNaN(value)) return 'Unknown';
+  return '$' + parseFloat(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function buildProgressBar(percent, width = 20) {
+  const filled = Math.round(Math.min(100, Math.max(0, percent)) / 100 * width);
+  const empty = width - filled;
+  return '█'.repeat(filled) + '░'.repeat(empty);
+}
+
+function buildBudgetSnapshot(budget, label = '💰 Budget Snapshot') {
+  if (!budget) return null;
+
+  const remaining = parseFloat(budget.remaining) || 0;
+  const allocated = parseFloat(budget.totalAllocated) || 0;
+  const spent     = parseFloat(budget.totalSpent) || 0;
+  const percent   = parseFloat(budget.percentUsed) || 0;
+  const bar       = buildProgressBar(percent);
+
+  const flag = remaining < 0 ? '🔴 OVER BUDGET'
+             : percent >= 90 ? '🟡 Near Limit'
+             :                 '🟢 Within Budget';
+
+  const lines = [
+    `\n${label} — ${budget.seasonName}`,
+    `Allocated:  ${formatCurrency(allocated)}`,
+    `Spent:      ${formatCurrency(spent)} (${percent.toFixed(1)}%)`,
+    `Remaining:  ${formatCurrency(remaining)}`,
+    `[${bar}] ${flag}`
+  ];
+
+  if (remaining < 0) {
+    lines.push(`⚠️ Budget exceeded by ${formatCurrency(Math.abs(remaining))} — mentor review recommended`);
+  } else if (percent >= 90) {
+    lines.push(`⚠️ Less than 10% budget remaining — mentor review recommended`);
+  }
+
+  return lines.join('\n');
+}
+
 const commands = [
-  // /requestpart
   new SlashCommandBuilder()
     .setName('requestpart')
-    .setDescription('Submit an FRC part request to Google Sheets')
+    .setDescription('Submit an FRC part request')
     .addStringOption(option =>
-      option
-        .setName('subsystem')
-        .setDescription('Subsystem (Drive, Intake, Shooter, Climber, Electrical, etc.)')
-        .setRequired(true)
+      option.setName('subsystem').setDescription('Subsystem').setRequired(true)
         .addChoices(
-          { name: 'Drive',       value: 'Drive' },
-          { name: 'Intake',      value: 'Intake' },
-          { name: 'Shooter',     value: 'Shooter' },
-          { name: 'Climber',     value: 'Climber' },
-          { name: 'Mechanical',  value: 'Mechanical' },
-          { name: 'Electrical',  value: 'Electrical' },
-          { name: 'Vision',      value: 'Vision' },
-		  { name: 'Pneumatics',  value: 'Pneumatics' },
-          { name: 'Software',    value: 'Software' },
-		  { name: 'Safety',      value: 'Safety' },
-          { name: 'Spares',      value: 'Spares' },
-          { name: 'Other',       value: 'Other' }
+          { name: 'Drive',      value: 'Drive'      },
+          { name: 'Intake',     value: 'Intake'     },
+          { name: 'Shooter',    value: 'Shooter'    },
+          { name: 'Climber',    value: 'Climber'    },
+          { name: 'Mechanical', value: 'Mechanical' },
+          { name: 'Electrical', value: 'Electrical' },
+          { name: 'Vision',     value: 'Vision'     },
+          { name: 'Pneumatics', value: 'Pneumatics' },
+          { name: 'Software',   value: 'Software'   },
+          { name: 'Safety',     value: 'Safety'     },
+          { name: 'Spares',     value: 'Spares'     },
+          { name: 'Other',      value: 'Other'      }
         )
     )
     .addStringOption(option =>
-      option
-        .setName('link')
-        .setDescription('Part link (URL)')
-        .setRequired(false)
+      option.setName('link').setDescription('Part link (URL)').setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('sku').setDescription('Specific SKU/part number (overrides AI detection)').setRequired(false)
     )
     .addIntegerOption(option =>
-      option
-        .setName('qty')
-        .setDescription('Quantity')
-        .setRequired(false)
+      option.setName('qty').setDescription('Quantity').setRequired(false)
     )
     .addNumberOption(option =>
-      option
-        .setName('maxbudget')
-        .setDescription('Max budget (USD)')
-        .setRequired(false)
+      option.setName('maxbudget').setDescription('Max budget (USD)').setRequired(false)
     )
     .addStringOption(option =>
-      option
-        .setName('priority')
-        .setDescription('Priority')
-        .setRequired(false)
+      option.setName('priority').setDescription('Priority').setRequired(false)
         .addChoices(
           { name: 'Critical', value: 'Critical' },
-          { name: 'High',     value: 'High' },
-          { name: 'Medium',   value: 'Medium' },
-          { name: 'Low',      value: 'Low' }
+          { name: 'High',     value: 'High'     },
+          { name: 'Medium',   value: 'Medium'   },
+          { name: 'Low',      value: 'Low'      }
         )
     )
     .addStringOption(option =>
-      option
-        .setName('notes')
-        .setDescription('Additional notes (size, length, etc.)')
-        .setRequired(false)
+      option.setName('notes').setDescription('Additional notes').setRequired(false)
     ),
 
-  // /openorders
+  new SlashCommandBuilder()
+    .setName('cancelrequest')
+    .setDescription('Cancel your own part request')
+    .addStringOption(option =>
+      option.setName('requestid').setDescription('Request ID (e.g., REQ-12345678)').setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('reason').setDescription('Reason for cancellation').setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('budgetstatus')
+    .setDescription('Show current season budget status'),
+
   new SlashCommandBuilder()
     .setName('openorders')
     .setDescription('Show all orders that have not been received'),
 
-  // /orderstatus
   new SlashCommandBuilder()
     .setName('orderstatus')
-    .setDescription('Check order or request status from Google Sheets')
+    .setDescription('Check order or request status')
     .addStringOption(option =>
-      option
-        .setName('requestid')
-        .setDescription('Request ID (e.g. REQ-1234)')
-        .setRequired(false)
+      option.setName('requestid').setDescription('Request ID (e.g. REQ-1234)').setRequired(false)
     )
     .addStringOption(option =>
-      option
-        .setName('orderid')
-        .setDescription('Order ID (e.g. ORD-5678)')
-        .setRequired(false)
+      option.setName('orderid').setDescription('Order ID (e.g. ORD-5678)').setRequired(false)
     ),
 
-  // /inventory
   new SlashCommandBuilder()
     .setName('inventory')
-    .setDescription('Look up inventory from Google Sheets')
+    .setDescription('Look up inventory')
     .addStringOption(option =>
-      option
-        .setName('sku')
-        .setDescription('Exact SKU / part number')
-        .setRequired(false)
+      option.setName('sku').setDescription('Exact SKU / part number').setRequired(false)
     )
     .addStringOption(option =>
-      option
-        .setName('search')
-        .setDescription('Keyword search in name/SKU')
-        .setRequired(false)
+      option.setName('search').setDescription('Keyword search').setRequired(false)
     )
+
 ].map(cmd => cmd.toJSON());
 
-// --------------------------------------------------
-// Register commands
-// --------------------------------------------------
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 async function registerCommands() {
-  console.log('Registering slash commands...');
+  console.log('[Bot] Registering slash commands...');
   await rest.put(
     Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
     { body: commands }
   );
-  console.log('Slash commands registered.');
+  console.log('[Bot] ✅ Slash commands registered');
 }
 
-// --------------------------------------------------
-// Discord client
-// --------------------------------------------------
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
 client.once('ready', () => {
-  console.log(`Bot logged in as ${client.user.tag}`);
+  console.log(`[Bot] ✅ Logged in as ${client.user.tag}`);
 });
 
-// --------------------------------------------------
-// Interaction handling
-// --------------------------------------------------
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === 'requestpart') {
-    await handleRequestPart(interaction);
-  } else if (interaction.commandName === 'inventory') {
-    await handleInventory(interaction);
-  } else if (interaction.commandName === 'orderstatus') {
-    await handleOrderStatus(interaction);
-  } else if (interaction.commandName === 'openorders') {
-    await handleOpenOrders(interaction);
+  try {
+    switch (interaction.commandName) {
+      case 'requestpart':
+        await handleRequestPart(interaction);
+        break;
+      case 'cancelrequest':
+        await handleCancelRequest(interaction);
+        break;
+      case 'budgetstatus':
+        await handleBudgetStatus(interaction);
+        break;
+      case 'inventory':
+        await handleInventory(interaction);
+        break;
+      case 'orderstatus':
+        await handleOrderStatus(interaction);
+        break;
+      case 'openorders':
+        await handleOpenOrders(interaction);
+        break;
+    }
+  } catch (err) {
+    console.error(`[Bot] Error handling ${interaction.commandName}:`, err);
+    const errorMessage = '❌ An error occurred';
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(errorMessage).catch(() => {});
+    } else {
+      await interaction.reply({ content: errorMessage, ephemeral: true }).catch(() => {});
+    }
   }
 });
 
-// ---- /requestpart handler ----
 async function handleRequestPart(interaction) {
   const subsystem = interaction.options.getString('subsystem');
-  const link      = interaction.options.getString('link') || '';
-  const qty       = interaction.options.getInteger('qty') || 1;
+  const link      = interaction.options.getString('link')      || '';
+  const sku       = interaction.options.getString('sku')       || '';
+  const qty       = interaction.options.getInteger('qty')      || 1;
   const maxBudget = interaction.options.getNumber('maxbudget') || '';
-  const priority  = interaction.options.getString('priority') || 'Medium';
-  const notesRaw  = interaction.options.getString('notes') || '';
-
-  const requester = interaction.user.username;   // or interaction.user.tag
-  const notes = `[Discord] ${notesRaw}`.trim();
+  const priority  = interaction.options.getString('priority')  || 'Medium';
+  const notes     = interaction.options.getString('notes')     || '';
 
   await interaction.deferReply({ ephemeral: true });
 
   try {
     const payload = {
       action:    'discordRequest',
-      requester: requester,
+      requester: interaction.user.username,
       subsystem: subsystem,
       partLink:  link,
+      sku:       sku,
       quantity:  qty,
       neededBy:  '',
       maxBudget: maxBudget,
       priority:  priority,
-      notes:     notes
+      notes:     `[Discord] ${notes}`.trim()
     };
 
     const response = await axios.post(APPS_SCRIPT_URL, payload);
     const data = response.data;
 
     if (data.status !== 'ok') {
-      console.error('Error from Apps Script:', data);
-      return interaction.editReply(`❌ Error from Sheets: ${data.message || 'Unknown error'}`);
+      return interaction.editReply(`❌ Error: ${data.message || 'Unknown error'}`);
     }
 
-    return interaction.editReply(
-      `✅ Request **${data.requestID}** submitted.\n` +
-      `Subsystem: **${subsystem}**\n` +
-      (link ? `Link: ${link}\n` : '') +
-      `Qty: **${qty}**, Priority: **${priority}**`
-    );
+    const responseLines = [
+      `✅ Request **${data.requestID}** submitted!`,
+      `Subsystem: **${subsystem}**`
+    ];
+
+    if (link) responseLines.push(`Link: ${link}`);
+    if (sku)  responseLines.push(`SKU: **${sku}** (user-specified)`);
+    responseLines.push(`Qty: **${qty}**, Priority: **${priority}**`);
+
+    const budgetSnapshot = buildBudgetSnapshot(data.budget);
+    if (budgetSnapshot) responseLines.push(budgetSnapshot);
+
+    return interaction.editReply(responseLines.join('\n'));
+
   } catch (err) {
-    console.error('Discord /requestpart error:', err);
-    return interaction.editReply('❌ Failed to send request to Google Sheets.');
+    console.error('[handleRequestPart] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
+  }
+}
+
+async function handleCancelRequest(interaction) {
+  const requestId = (interaction.options.getString('requestid') || '').trim().toUpperCase();
+  const reason    = (interaction.options.getString('reason')    || '').trim();
+
+  if (!requestId) {
+    return interaction.reply({ content: '⚠️ Please provide a request ID', ephemeral: true });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const payload = {
+      action:    'cancelRequest',
+      requestId: requestId,
+      canceller: interaction.user.username,
+      reason:    reason || 'No reason provided'
+    };
+
+    const response = await axios.post(APPS_SCRIPT_URL, payload);
+    const data = response.data;
+
+    if (data.status !== 'ok') {
+      return interaction.editReply(`❌ ${data.message || 'Unknown error'}`);
+    }
+
+    const responseLines = [`✅ Request **${requestId}** cancelled successfully`];
+    if (reason) responseLines.push(`Reason: ${reason}`);
+
+    return interaction.editReply(responseLines.join('\n'));
+
+  } catch (err) {
+    console.error('[handleCancelRequest] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
+  }
+}
+
+async function handleBudgetStatus(interaction) {
+  await interaction.deferReply({ ephemeral: false });
+
+  try {
+    const payload  = { action: 'budgetStatus' };
+    const response = await axios.post(APPS_SCRIPT_URL, payload);
+    const data     = response.data;
+
+    if (data.status !== 'ok') {
+      return interaction.editReply(`❌ Error: ${data.message || 'Unknown error'}`);
+    }
+
+    const b       = data.budget;
+    const bar     = data.bar || buildProgressBar(parseFloat(b.percentUsed) || 0);
+    const percent = parseFloat(b.percentUsed) || 0;
+
+    const flag = parseFloat(b.remaining) < 0 ? '🔴 OVER BUDGET'
+               : percent >= 90              ? '🟡 Near Limit'
+               :                              '🟢 Within Budget';
+
+    const lines = [
+      `💰 **Budget Status — ${b.seasonName}**`,
+      `Season: ${b.seasonStart} → ${b.seasonEnd}\n`,
+      `**Total Allocated:** ${formatCurrency(b.totalAllocated)}`,
+      `**Opening Balance:** ${formatCurrency(b.openingBalance)} *(pre-PartBot spend)*`,
+      `**PartBot Orders:**  ${formatCurrency(b.partBotSpend)}`,
+      `─────────────────────────`,
+      `**Total Spent:**     ${formatCurrency(b.totalSpent)} (${percent.toFixed(1)}%)`,
+      `**Remaining:**       ${formatCurrency(b.remaining)}`,
+      `\`[${bar}]\` ${flag}`
+    ];
+
+    if (parseFloat(b.remaining) < 0) {
+      lines.push(`\n⚠️ Budget exceeded by **${formatCurrency(Math.abs(parseFloat(b.remaining)))}** — mentor review recommended`);
+    } else if (percent >= 90) {
+      lines.push(`\n⚠️ Less than 10% remaining — spend carefully!`);
+    }
+
+    return interaction.editReply(lines.join('\n'));
+
+  } catch (err) {
+    console.error('[handleBudgetStatus] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
   }
 }
 
@@ -246,90 +386,69 @@ async function handleOpenOrders(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const payload = {
-      action: 'openOrders'
-    };
-
+    const payload  = { action: 'openOrders' };
     const response = await axios.post(APPS_SCRIPT_URL, payload);
-    const data = response.data;
+    const data     = response.data;
 
     if (data.status !== 'ok') {
-      console.error('Error from Apps Script (openOrders):', data);
-      return interaction.editReply(`❌ Error from Sheets: ${data.message || 'Unknown error'}`);
+      return interaction.editReply(`❌ Error: ${data.message || 'Unknown error'}`);
     }
 
     const orders = data.orders || [];
     const denied = data.denied || [];
 
     if (orders.length === 0 && denied.length === 0) {
-      return interaction.editReply('✅ No open orders and no denied requests. Everything is up to date.');
+      return interaction.editReply('✅ No open orders and no denied requests.');
     }
 
-    const MAX_ORDERS = 15;
-    const shownOrders = orders.slice(0, MAX_ORDERS);
+    const lines = [];
+    lines.push('📦 **Open Orders (not yet received)**');
 
-    let msg = '';
-
-    // ----- Open Orders -----
-    msg += `📦 **Open Orders (not yet received)**\n`;
     if (orders.length === 0) {
-      msg += `No open orders.\n\n`;
+      lines.push('No open orders.\n');
     } else {
-      if (orders.length > MAX_ORDERS) {
-        msg += `Showing first ${MAX_ORDERS} of ${orders.length} open orders.\n\n`;
-      } else {
-        msg += `Total open orders: ${orders.length}\n\n`;
-      }
-
-      for (const o of shownOrders) {
-        msg +=
-          `• **${o.orderId}** — ${o.vendor || 'Unknown vendor'}\n` +
-          `  Part: ${o.partName || '(no name)'}\n` +
-          `  SKU: ${o.sku || '(none)'} | Qty: ${o.qty || 'N/A'}\n` +
-          `  Status: ${o.status || 'Unknown'}\n` +
-          `  Ordered: ${formatDate(o.orderDate)} | ETA: ${formatEta(o.eta)}\n` +
-          `  Tracking: ${o.tracking || '—'}\n` +
-          `  Requests: ${o.includedRequests || '—'}\n\n`;
+      const shown = orders.slice(0, 15);
+      lines.push(`Total: ${orders.length}\n`);
+      for (const o of shown) {
+        lines.push(
+          `• **${o.orderId}** — ${o.vendor || 'Unknown'}`,
+          `  Part: ${o.partName || '(no name)'}`,
+          `  SKU: ${o.sku || '(none)'} | Qty: ${o.qty || 'N/A'}`,
+          `  Status: ${o.status || 'Unknown'}`,
+          `  Ordered: ${formatDate(o.orderDate)} | ETA: ${formatEta(o.eta)}`,
+          `  Tracking: ${o.tracking || '—'}\n`
+        );
       }
     }
 
-    // ----- Denied Requests (Needs Attention) -----
     if (denied.length > 0) {
-      const MAX_DENIED = 15;
-      const shownDenied = denied.slice(0, MAX_DENIED);
-
-      msg += `⚠️ **Requests Needing Attention (Denied)**\n`;
-      if (denied.length > MAX_DENIED) {
-        msg += `Showing first ${MAX_DENIED} of ${denied.length} denied requests.\n\n`;
-      } else {
-        msg += `Total denied requests: ${denied.length}\n\n`;
-      }
-
+      const shownDenied = denied.slice(0, 15);
+      lines.push('⚠️ **Denied Requests**');
+      lines.push(`Total: ${denied.length}\n`);
       for (const r of shownDenied) {
-        msg +=
-          `• **${r.id}** — ${r.partName || '(no name)'}\n` +
-          `  Requester: ${r.requester || 'Unknown'} | Subsystem: ${r.subsystem || 'N/A'}\n` +
-          `  Qty: ${r.qty || 'N/A'} | Priority: ${r.priority || 'N/A'}\n` +
-          `  Notes: ${r.mentorNotes || '—'}\n` +
-          `  Link: ${r.link || '—'}\n\n`;
+        lines.push(
+          `• **${r.id}** — ${r.partName || '(no name)'}`,
+          `  Requester: ${r.requester || 'Unknown'}`,
+          `  Notes: ${r.mentorNotes || '—'}\n`
+        );
       }
     }
 
-    return interaction.editReply({ content: msg.trimEnd() });
+    return interaction.editReply(lines.join('\n'));
 
   } catch (err) {
-    console.error('Discord /openorders error:', err);
-    return interaction.editReply('❌ Failed to contact Google Sheets.');
+    console.error('[handleOpenOrders] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
   }
 }
 
 async function handleOrderStatus(interaction) {
   const requestId = (interaction.options.getString('requestid') || '').trim();
-  const orderId   = (interaction.options.getString('orderid') || '').trim();
+  const orderId   = (interaction.options.getString('orderid')   || '').trim();
 
   if (!requestId && !orderId) {
     return interaction.reply({
-      content: '⚠️ Please provide either a **requestid** (e.g. `REQ-1234`) or an **orderid** (e.g. `ORD-5678`).',
+      content: '⚠️ Provide either **requestid** or **orderid**',
       ephemeral: true
     });
   }
@@ -337,92 +456,69 @@ async function handleOrderStatus(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const payload = {
-      action: 'orderStatus',
-      requestId,
-      orderId
-    };
-
+    const payload  = { action: 'orderStatus', requestId, orderId };
     const response = await axios.post(APPS_SCRIPT_URL, payload);
-    const data = response.data;
+    const data     = response.data;
 
     if (data.status !== 'ok') {
-      console.error('Error from Apps Script (orderStatus):', data);
-      return interaction.editReply(`❌ Error from Sheets: ${data.message || 'Unknown error'}`);
+      return interaction.editReply(`❌ Error: ${data.message || 'Unknown error'}`);
     }
 
-    // ----- Case: lookup by Request ID -----
     if (requestId) {
-      const r = data.request || null;
-      const orders = data.orders || [];
+      const r = data.request;
+      if (!r) return interaction.editReply(`🔍 No request found for \`${requestId}\``);
 
-      if (!r) {
-        return interaction.editReply(`🔍 No request found for \`${requestId}\`.`);
+      const lines = [
+        `📄 **Request Status – ${r.id}**\n`,
+        `**Status:** ${r.requestStatus || 'Unknown'}`,
+        `**Subsystem:** ${r.subsystem || 'N/A'}`,
+        `**Part:** ${r.partName || '(no name)'}`,
+        `**Qty:** ${r.qty || 'N/A'}`,
+        `**Priority:** ${r.priority || 'N/A'}`
+      ];
+
+      const orders = data.orders || [];
+      if (orders.length > 0) {
+        lines.push('\n📦 **Linked Orders:**');
+        for (const o of orders) {
+          lines.push(`• **${o.orderId}** — ${o.status || 'Unknown'}, ETA: ${formatEta(o.eta)}`);
+        }
       }
 
-      let msg =
-        `📄 **Request Status – ${r.id}**\n\n` +
-        `**Status:** ${r.requestStatus || 'Unknown'}\n` +
-        `**Subsystem:** ${r.subsystem || 'N/A'}\n` +
-        `**Part:** ${r.partName || '(no name)'}\n` +
-        `**SKU:** ${r.sku || '(none)'}\n` +
-        `**Qty:** ${r.qty || 'N/A'}\n` +
-        `**Priority:** ${r.priority || 'N/A'}\n`;
-      if (orders.length === 0) {
-        msg += `\nNo orders have been created for this request yet.`;
-      } else {
-        msg += `\n📦 **Linked Orders:**\n`;
-        for (const o of orders) {
-   	  msg +=
-            `• **${o.orderId}** — Status: ${o.status || 'Unknown'}, ` +
-            `Vendor: ${o.vendor || 'N/A'}, ` +
-            `Ordered: ${formatDate(o.orderDate)}, ` +
-            `ETA (Delivery): ${formatEta(o.eta)}\n`;
-          }
-       }
-
-      return interaction.editReply({ content: msg });
+      return interaction.editReply(lines.join('\n'));
     }
 
-    // ----- Case: lookup by Order ID -----
     if (orderId) {
-      const o = data.order || null;
+      const o = data.order;
+      if (!o) return interaction.editReply(`🔍 No order found for \`${orderId}\``);
 
-      if (!o) {
-        return interaction.editReply(`🔍 No order found for \`${orderId}\`.`);
-      }
+      const lines = [
+        `📦 **Order Status – ${o.orderId}**\n`,
+        `**Status:** ${o.status || 'Unknown'}`,
+        `**Vendor:** ${o.vendor || 'N/A'}`,
+        `**Part:** ${o.partName || '(no name)'}`,
+        `**Qty:** ${o.qty || 'N/A'}`,
+        `**Ordered:** ${formatDate(o.orderDate)}`,
+        `**ETA:** ${formatEta(o.eta)}`,
+        `**Tracking:** ${o.tracking || '—'}`
+      ];
 
-      const msg =
-        `📦 **Order Status – ${o.orderId}**\n\n` +
-        `**Status:** ${o.status || 'Unknown'}\n` +
-        `**Vendor:** ${o.vendor || 'N/A'}\n` +
-        `**Part:** ${o.partName || '(no name)'}\n` +
-        `**SKU:** ${o.sku || '(none)'}\n` +
-        `**Qty:** ${o.qty || 'N/A'}\n` +
-        `**Order Date:** ${formatDate(o.orderDate)}\n` +
-        `**Shipping:** ${o.shipping || 'N/A'}\n` +
-        `**Tracking:** ${o.tracking || '—'}\n` +
-        `**ETA (Delivery) :** ${formatEta(o.eta)}\n` +
-        `**Received:** ${o.receivedDate || '—'}\n` +
-        `**Requests:** ${o.includedRequests || '—'}`;
-
-      return interaction.editReply({ content: msg });
+      return interaction.editReply(lines.join('\n'));
     }
 
   } catch (err) {
-    console.error('Discord /orderstatus error:', err);
-    return interaction.editReply('❌ Failed to contact Google Sheets.');
+    console.error('[handleOrderStatus] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
   }
 }
 
-// ---- /inventory handler ----
 async function handleInventory(interaction) {
-  const sku    = (interaction.options.getString('sku') || '').trim();
+  const sku    = (interaction.options.getString('sku')    || '').trim();
   const search = (interaction.options.getString('search') || '').trim();
 
   if (!sku && !search) {
     return interaction.reply({
-      content: '⚠️ Provide either a **sku** or a **search** term.',
+      content: '⚠️ Provide either **sku** or **search**',
       ephemeral: true
     });
   }
@@ -430,56 +526,49 @@ async function handleInventory(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const payload = {
-      action: 'inventory',
-      sku: sku,
-      search: search
-    };
-
+    const payload  = { action: 'inventory', sku, search };
     const response = await axios.post(APPS_SCRIPT_URL, payload);
-    const data = response.data;
+    const data     = response.data;
 
     if (data.status !== 'ok') {
-      console.error('Error from Apps Script (inventory):', data);
-      return interaction.editReply(`❌ Error from Sheets: ${data.message || 'Unknown error'}`);
+      return interaction.editReply(`❌ Error: ${data.message || 'Unknown error'}`);
     }
 
     const matches = data.matches || [];
 
     if (matches.length === 0) {
-      return interaction.editReply(`🔍 No inventory found for \`${sku || search}\`.`);
+      return interaction.editReply(`🔍 No inventory found for \`${sku || search}\``);
     }
 
     if (matches.length === 1) {
       const m = matches[0];
-      const msg =
-        `📦 **Inventory Match**\n\n` +
-        `**SKU:** ${m.sku}\n` +
-        `**Name:** ${m.name}\n` +
-        `**Vendor:** ${m.vendor}\n` +
-        `**Location:** ${m.location}\n` +
-        `**Qty On-Hand:** ${m.quantity}`;
-      return interaction.editReply({ content: msg });
+      const lines = [
+        '📦 **Inventory Match**\n',
+        `**SKU:** ${m.sku}`,
+        `**Name:** ${m.name}`,
+        `**Vendor:** ${m.vendor}`,
+        `**Location:** ${m.location}`,
+        `**Qty On-Hand:** ${m.quantity}`
+      ];
+      return interaction.editReply(lines.join('\n'));
     }
 
-    // multiple matches
-    let reply = `📦 **${matches.length} matches found:**\n`;
+    const lines = [`📦 **${matches.length} matches found:**`];
     for (const m of matches.slice(0, 10)) {
-      reply += `• \`${m.sku}\` — ${m.name} (Qty: ${m.quantity}, Loc: ${m.location})\n`;
+      lines.push(`• \`${m.sku}\` — ${m.name} (Qty: ${m.quantity}, Loc: ${m.location})`);
     }
-    return interaction.editReply({ content: reply });
+
+    return interaction.editReply(lines.join('\n'));
 
   } catch (err) {
-    console.error('Discord /inventory error:', err);
-    return interaction.editReply('❌ Failed to contact Google Sheets.');
+    console.error('[handleInventory] Error:', err.message);
+    return interaction.editReply('❌ Failed to contact Google Sheets');
   }
 }
 
-// --------------------------------------------------
-// Start bot
-// --------------------------------------------------
 registerCommands()
   .then(() => client.login(TOKEN))
   .catch(err => {
-    console.error('Failed to register commands or login:', err);
+    console.error('[Bot] ❌ Failed to start:', err);
+    process.exit(1);
   });
