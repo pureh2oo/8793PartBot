@@ -359,9 +359,10 @@ async function handleBudgetStatus(interaction) {
     const lines = [
       `💰 **Budget Status — ${b.seasonName}**`,
       `Season: ${b.seasonStart} → ${b.seasonEnd}\n`,
-      `**Total Allocated:** ${formatCurrency(b.totalAllocated)}`,
-      `**Opening Balance:** ${formatCurrency(b.openingBalance)} *(pre-PartBot spend)*`,
-      `**PartBot Orders:**  ${formatCurrency(b.partBotSpend)}`,
+      `**Total Budget:**        ${formatCurrency(b.totalAllocated)}`,
+      `**Event 1 (non-parts):** ${formatCurrency(b.event1Budget)}`,
+      `**Event 2 (non-parts):** ${formatCurrency(b.event2Budget)}`,
+      `**Parts Purchased:**     ${formatCurrency(b.partBotSpend)}`,
       `─────────────────────────`,
       `**Total Spent:**     ${formatCurrency(b.totalSpent)} (${percent.toFixed(1)}%)`,
       `**Remaining:**       ${formatCurrency(b.remaining)}`,
